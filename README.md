@@ -270,3 +270,12 @@ normalization).
 
 Visual healing is a seam that only activates if `opencv-python` is
 installed — see `chimera/healing/healer.py::_try_visual`.
+
+Quick-start summary for you:
+
+  python3 -m venv .venv && source .venv/bin/activate
+  pip install -e .
+  python -m uiautomator2 init
+  ollama serve & ; ollama pull qwen2.5:7b-instruct
+  python scripts/probe_device.py          # sanity check
+  chimera "Open WhatsApp" -v               # first real run
