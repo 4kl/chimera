@@ -1,0 +1,34 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" class="android.widget.FrameLayout" package="com.whatsapp" content-desc=""
+        bounds="[0,0][1080,2400]" clickable="false" enabled="true" focused="false"
+        resource-id="" text="">
+    <node index="0" class="android.widget.LinearLayout" package="com.whatsapp" content-desc=""
+          bounds="[0,0][1080,2400]" clickable="false" enabled="true" focused="false"
+          resource-id="" text="">
+      <node index="0" class="android.widget.Toolbar" package="com.whatsapp" content-desc=""
+            bounds="[0,72][1080,216]" clickable="false" enabled="true" focused="false"
+            resource-id="com.whatsapp:id/toolbar" text="">
+        <node index="0" class="android.widget.ImageButton" package="com.whatsapp"
+              content-desc="Navigate up" bounds="[0,72][168,216]" clickable="true"
+              enabled="true" focused="false" resource-id="" text=""/>
+        <node index="1" class="android.widget.TextView" package="com.whatsapp"
+              content-desc="" bounds="[168,96][700,192]" clickable="false"
+              enabled="true" focused="false"
+              resource-id="com.whatsapp:id/conversation_contact_name" text="John"/>
+      </node>
+      <node index="1" class="android.widget.FrameLayout" package="com.whatsapp"
+            content-desc="" bounds="[0,2200][1080,2400]" clickable="false"
+            enabled="true" focused="false" resource-id="" text="">
+        <node index="0" class="android.widget.EditText" package="com.whatsapp"
+              content-desc="Type a message" bounds="[24,2232][840,2368]"
+              clickable="true" enabled="true" focused="false"
+              resource-id="com.whatsapp:id/entry" text=""/>
+        <node index="1" class="android.widget.ImageButton" package="com.whatsapp"
+              content-desc="Send" bounds="[864,2232][1056,2368]"
+              clickable="true" enabled="true" focused="false"
+              resource-id="com.whatsapp:id/send" text=""/>
+      </node>
+    </node>
+  </node>
+</hierarchy>
