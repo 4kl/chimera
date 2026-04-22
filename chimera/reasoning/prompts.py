@@ -16,8 +16,12 @@ Rules:
 - Roles are ABSTRACT semantic slots (examples: search_icon, search_bar,
   contact_result, message_input, send_button, back_button, app_icon).
 - NEVER reference selectors, resource-ids, XPaths, or pixel coordinates.
-- If the command implies opening an app, start with a 'launch' step whose
-  value is the app hint and role is 'app'.
+- If the command implies opening an app, start with a 'launch' step where:
+    role = "app"
+    action = "launch"
+    value = the same string you put in app_hint (package id like
+            "com.whatsapp" or common name like "whatsapp"). NEVER null.
+    description = "launch the <app name> app"
 - Keep the plan minimal: one role per step, no redundant waits.
 - description must be specific enough to disambiguate from other on-screen
   elements (mention location, icon appearance, or nearby text)."""

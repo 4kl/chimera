@@ -93,6 +93,33 @@ def test_bump_failure_persists(tmp_path):
     assert again.failures == 2
 
 
+def test_cross_screen_fallback(tmp_path):
+    """Same (app, version), different screen_fp → get() returns the latest
+    bundle with _origin_screen_fp set so the learning engine can REVALIDATE."""
+    m = Memory(str(tmp_path / "xs.db"))
+    m.put(_make(screen="scrA"))
+    # Lookup on a different screen fp — should return the scrA bundle with
+    # origin marker set.
+    got = m.get("com.whatsapp", "2.24.10", "scrB", "send_button")
+    assert got is not None
+    assert got.screen_fingerprint == "scrA"
+    assert got._origin_screen_fp == "scrA"
+    # Different app → still isolated.
+    assert m.get("com.other", "2.24.10", "scrB", "send_button") is None
+
+
+def test_cross_screen_does_not_override_exact(tmp_path):
+    m = Memory(str(tmp_path / "xsoverride.db"))
+    # Two bundles: one on scrA, one on scrB, same role/version
+    m.put(_make(screen="scrA", expr="//*[@resource-id='A']"))
+    m.put(_make(screen="scrB", expr="//*[@resource-id='B']"))
+    # Exact hit for scrB returns B, not A
+    got = m.get("com.whatsapp", "2.24.10", "scrB", "send_button")
+    assert got is not None
+    assert got.primary.expr == "//*[@resource-id='B']"
+    assert got._origin_screen_fp is None  # exact hit, no cross-screen marker
+
+
 def test_decay_formula_bounds():
     now = 1_000_000_000.0
     # Fresh, no failures → full score.

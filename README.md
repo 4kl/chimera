@@ -227,9 +227,27 @@ upgraded in place, `app_version` backfills to `""`.
 Inspect it directly:
 
 ```bash
+# Summary: apps + versions + role counts + last-ok age
+python scripts/inspect_db.py
+
+# All roles stored for one app (across versions)
+python scripts/inspect_db.py com.whatsapp
+
+# Just one version
+python scripts/inspect_db.py com.whatsapp 2.24
+
+# Full bundle dump (primary + all fallbacks + description)
+python scripts/inspect_db.py com.whatsapp 2.24 --full
+
+# Recent event log (learned / ok / fail_primary / healed / migrated)
+python scripts/inspect_db.py --events
+```
+
+Or with raw SQL:
+
+```bash
 sqlite3 chimera.db '.schema selectors'
 sqlite3 chimera.db "SELECT role, primary_strategy, failures, provenance FROM selectors WHERE app_package='com.whatsapp';"
-sqlite3 chimera.db "SELECT ts, outcome, role FROM events ORDER BY ts DESC LIMIT 20;"
 ```
 
 ---

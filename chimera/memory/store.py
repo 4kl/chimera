@@ -45,12 +45,18 @@ class Memory:
     def get(self, app: str, version: str, screen_fp: str, role: str
             ) -> Optional[SelectorBundle]:
         """Tiered lookup:
-          1) exact (app, version, screen_fp, role)
-          2) (app, version, '*', role)
-          3) most-recent (app, any other version, screen_fp, role)  — migration seed
-          4) most-recent (app, any other version, '*', role)        — migration seed
-        Seeds copied from another version are marked provenance='migrated' and
-        their primary_score is scaled down; they must re-validate before trust.
+          1) exact (app, version, screen_fp, role)                   — REUSE path
+          2) (app, version, '*', role)                               — REUSE path
+          3) same (app, version), any screen, most-recent success    — REVALIDATE
+          4) most-recent (app, any other version, screen_fp, role)   — REVALIDATE (migrated)
+          5) most-recent (app, any other version, '*', role)         — REVALIDATE (migrated)
+
+        Cross-screen hits (tier 3) keep provenance='learned' but come back
+        with `screen_fingerprint` set to the *requested* screen, so the
+        learning engine can detect the mismatch and choose REVALIDATE mode.
+
+        Migration seeds (tiers 4/5) get provenance='migrated' and a scaled
+        score; they must re-validate before being trusted.
         """
         row = self._exact(app, version, screen_fp, role)
         if row:
@@ -60,7 +66,21 @@ class Memory:
         if row:
             return self._row_to_bundle(row)
 
-        # version-cross seeds
+        # Same (app, version), different screen context. We've seen this role
+        # work before — give the selector another shot on the current screen
+        # before resorting to an LLM call.
+        row = self._latest_same_version(app, version, role,
+                                        exclude_screen_fps=(screen_fp,
+                                                            WILDCARD_SCREEN))
+        if row:
+            bundle = self._row_to_bundle(row)
+            # Remember the original screen_fp so the learning engine can
+            # detect the cross-screen case; we keep the bundle otherwise
+            # intact (same provenance, same score).
+            bundle._origin_screen_fp = bundle.screen_fingerprint
+            return bundle
+
+        # Cross-version seed
         seed = self._latest_other_version(app, version, screen_fp, role) \
             or self._latest_other_version(app, version, WILDCARD_SCREEN, role)
         if seed is not None:
@@ -250,6 +270,19 @@ class Memory:
             "SELECT * FROM selectors WHERE app_package=? AND app_version=? "
             "AND screen_fp=? AND role=?",
             (app, version, screen_fp, role),
+        ).fetchone()
+
+    def _latest_same_version(self, app: str, version: str, role: str,
+                             exclude_screen_fps: tuple[str, ...] = ()
+                             ) -> Optional[sqlite3.Row]:
+        placeholders = ",".join("?" * len(exclude_screen_fps)) or "''"
+        sql = (
+            "SELECT * FROM selectors WHERE app_package=? AND app_version=? "
+            f"AND role=? AND screen_fp NOT IN ({placeholders}) "
+            "ORDER BY last_ok DESC, id DESC LIMIT 1"
+        )
+        return self._con.execute(
+            sql, (app, version, role, *exclude_screen_fps)
         ).fetchone()
 
     def _latest_other_version(self, app: str, current_version: str,

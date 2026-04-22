@@ -73,6 +73,9 @@ class SelectorBundle:
     last_ok: float = 0.0
     failures: int = 0
     version: int = 1  # bundle revision, not app version
+    # Set by Memory.get when this bundle was served from a different screen
+    # fingerprint than was requested (cross-screen reuse). None otherwise.
+    _origin_screen_fp: Optional[str] = None
 
     def all_candidates(self) -> list[SelectorCandidate]:
         return [self.primary, *self.fallbacks]

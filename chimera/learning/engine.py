@@ -60,7 +60,14 @@ class LearningEngine:
 
         if bundle.is_migrated:
             return ModeDecision(StepMode.REVALIDATE, bundle, effective,
-                                f"migrated from another version; will validate")
+                                "migrated from another version; will validate")
+
+        # Cross-screen hit: same (app, version) but learned on a different
+        # screen context (e.g., launcher fingerprint shifted).
+        origin = getattr(bundle, "_origin_screen_fp", None)
+        if origin and origin != frame.fp:
+            return ModeDecision(StepMode.REVALIDATE, bundle, effective,
+                                f"cross-screen reuse (origin fp={origin[:8]})")
 
         if effective < MIN_REUSE_CONFIDENCE:
             return ModeDecision(StepMode.REVALIDATE, bundle, effective,
