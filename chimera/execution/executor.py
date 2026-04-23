@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 from ..core.driver import Driver
 from ..core.errors import ExecutionError
@@ -16,6 +17,10 @@ from ..reasoning.matcher import llm_pick
 from ..reasoning.ollama_client import Ollama
 from ..selector.generator import SelectorGenerator
 from ..selector.validator import validate
+from ..state.detector import StateDetector
+from ..state.models import StateTransition
+from ..state.navigator import Navigator
+from ..state.store import StateStore
 from .actions import perform
 
 log = logging.getLogger("chimera.exec")
@@ -28,13 +33,19 @@ class Executor:
                  gen: SelectorGenerator,
                  ollama: Ollama,
                  healer,
-                 learning: LearningEngine):
+                 learning: LearningEngine,
+                 state_detector: Optional[StateDetector] = None,
+                 state_store: Optional[StateStore] = None,
+                 navigator: Optional[Navigator] = None):
         self.d = driver
         self.mem = memory
         self.gen = gen
         self.llm = ollama
         self.heal = healer
         self.learning = learning
+        self.state_detector = state_detector
+        self.state_store = state_store
+        self.nav = navigator
 
     # ---------- perception ----------
     def perceive(self, with_screenshot: bool = False) -> Frame:
@@ -70,6 +81,14 @@ class Executor:
             self._wait_ui_settle()
             return
 
+        # State-aware pre-check: if the step declares a target_state and we're
+        # elsewhere, navigate there first.
+        self._navigate_if_needed(step, ctx)
+
+        # Snapshot state before the action so we can record a transition
+        # after it lands. This is how the state graph builds itself.
+        pre_state = self._detect_state(ctx)
+
         # Element-based steps: inner retry covers the "UI is still loading
         # after a screen transition" case. Each attempt re-perceives, so the
         # LLM gets a fresh tree each time.
@@ -80,6 +99,7 @@ class Executor:
                 self._run_element_step(step, ctx)
                 # Let the action's effect render before the next step perceives.
                 self._wait_ui_settle(timeout=2.0, stable_ms=300)
+                self._record_transition(step, ctx, pre_state, success=True)
                 return
             except ExecutionError as e:
                 last_err = e
@@ -90,6 +110,7 @@ class Executor:
                              step.role, e, wait)
                     time.sleep(wait)
         assert last_err is not None
+        self._record_transition(step, ctx, pre_state, success=False)
         raise last_err
 
     def _run_element_step(self, step: ActionStep, ctx: RunCtx):
@@ -136,6 +157,52 @@ class Executor:
                            StepMode.HEAL if decision.mode == StepMode.HEAL else StepMode.LEARN,
                            new_bundle, outcome,
                            reason=new_bundle.description)
+
+    # ---------- state-awareness ----------
+    def _detect_state(self, ctx: RunCtx) -> Optional[str]:
+        if not self.state_detector or not ctx.app:
+            return None
+        try:
+            frame = self.perceive()
+            res = self.state_detector.detect(
+                frame, ctx.app, ctx.app_version or "")
+            return res.state.name
+        except Exception as e:
+            log.debug("state detect failed: %s", e)
+            return None
+
+    def _navigate_if_needed(self, step: ActionStep, ctx: RunCtx):
+        if not step.target_state or not self.nav:
+            return
+        current = self._detect_state(ctx)
+        if current == step.target_state:
+            return
+        log.info("state mismatch: current=%s target=%s; navigating",
+                 current, step.target_state)
+        self.nav.navigate_to(
+            step.target_state, ctx,
+            perceive=self.perceive,
+            execute_step=self.run_step,
+        )
+
+    def _record_transition(self, step: ActionStep, ctx: RunCtx,
+                           pre_state: Optional[str], success: bool):
+        if not self.state_store or not ctx.app or not pre_state:
+            return
+        post_state = self._detect_state(ctx)
+        if not post_state or post_state == pre_state and not success:
+            return  # don't record self-loops on pure failures
+        try:
+            self.state_store.record_transition(
+                StateTransition(
+                    from_state=pre_state,
+                    to_state=post_state or pre_state,
+                    role=step.role, action=step.action,
+                    app_package=ctx.app, app_version=ctx.app_version or ""),
+                success=success,
+            )
+        except Exception as e:
+            log.debug("record_transition failed: %s", e)
 
     # ---------- readiness waits ----------
     def _wait_app_ready(self, pkg: str, timeout: float = 8.0,

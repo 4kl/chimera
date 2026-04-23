@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 def run(con: sqlite3.Connection, schema_ddl: str):

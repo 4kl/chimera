@@ -1,25 +1,51 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from ..core.errors import ReasoningError
-from ..core.models import ActionStep, Intent, UINode
+from ..core.models import ActionStep, Frame, Intent, UINode
 from .ollama_client import Ollama
-from .prompts import INTENT_SYS, MATCH_SYS
+from .prompts import CLASSIFY_STATE_SYS, INTENT_SYS, MATCH_SYS
 
 
-def llm_plan(ollama: Ollama, nl_command: str) -> Intent:
+def llm_plan(ollama: Ollama, nl_command: str,
+             known_states: Optional[list[str]] = None) -> Intent:
     """Decompose a natural-language command into an Intent."""
-    out = ollama.chat_json(INTENT_SYS, nl_command)
+    user_payload: Any
+    if known_states:
+        user_payload = json.dumps({"command": nl_command,
+                                   "known_states": known_states},
+                                  ensure_ascii=False)
+    else:
+        user_payload = nl_command
+    out = ollama.chat_json(INTENT_SYS, user_payload)
     steps_raw = out.get("steps") or []
     steps = [ActionStep(
         role=s.get("role", ""),
         action=s.get("action", "tap"),
         value=s.get("value"),
         description=s.get("description", ""),
+        target_state=s.get("target_state"),
     ) for s in steps_raw if s.get("role")]
     return Intent(raw=nl_command, app_hint=out.get("app_hint"), steps=steps)
+
+
+def llm_classify_state(ollama: Ollama, frame: Frame,
+                       known_states: list[str]) -> dict[str, Any]:
+    """Ask the LLM to classify the current screen into a semantic state."""
+    elements = [n.to_slim() for n in frame.flat
+                if n.resource_id or n.content_desc or n.text or n.clickable]
+    user = json.dumps(
+        {"known_states": known_states,
+         "package": frame.package,
+         "elements": elements[:120]},   # cap to keep prompt small
+        ensure_ascii=False,
+    )
+    out = ollama.chat_json(CLASSIFY_STATE_SYS, user)
+    if not isinstance(out, dict) or "state" not in out:
+        raise ReasoningError(f"state classification missing 'state': {out}")
+    return out
 
 
 def _candidate_nodes(flat: list[UINode]) -> list[UINode]:

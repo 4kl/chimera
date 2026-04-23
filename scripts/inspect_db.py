@@ -115,20 +115,86 @@ def events(con: sqlite3.Connection, limit: int = 30) -> None:
               f"{(r['app_version'] or '-'):<10} {r['role']:<22}")
 
 
+def states(con: sqlite3.Connection, app: str | None = None) -> None:
+    where, params = "", []
+    if app:
+        where = "WHERE app_package = ?"
+        params.append(app)
+    rows = con.execute(
+        f"SELECT app_package, app_version, name, confidence, "
+        f"       fingerprints_json, allowed_roles_json "
+        f"FROM states {where} ORDER BY app_package, app_version, name", params
+    ).fetchall()
+    if not rows:
+        print("(no states learned yet)")
+        return
+    print(f"{'app_package':<42} {'ver':<10} {'state':<20} "
+          f"{'conf':>5}  fps  roles")
+    print("-" * 100)
+    for r in rows:
+        fps = len(json.loads(r["fingerprints_json"]))
+        roles = json.loads(r["allowed_roles_json"])
+        role_str = ",".join(roles[:3]) + ("…" if len(roles) > 3 else "")
+        print(f"{r['app_package']:<42} {(r['app_version'] or '-'):<10} "
+              f"{r['name']:<20} {r['confidence']:>5.2f}  {fps:>3}  {role_str}")
+
+
+def graph(con: sqlite3.Connection, app: str,
+          version: str | None = None) -> None:
+    where = "app_package = ?"
+    params: list = [app]
+    if version:
+        where += " AND app_version LIKE ?"
+        params.append(f"{version}%")
+    rows = con.execute(
+        f"SELECT app_version, from_state, to_state, role, action, "
+        f"       success, failure, last_ok "
+        f"FROM state_transitions WHERE {where} "
+        f"ORDER BY app_version, from_state, to_state", params
+    ).fetchall()
+    if not rows:
+        print(f"(no transitions for {app})")
+        return
+    print(f"\n{app}"
+          + (f" @ {version}*" if version else "")
+          + f"  —  {len(rows)} edge(s)\n")
+    print(f"{'ver':<10} {'from':<18} {'role':<18} {'action':<6} "
+          f"→ {'to':<18} {'conf':>5}  (ok/fail)")
+    print("-" * 95)
+    for r in rows:
+        total = (r["success"] or 0) + (r["failure"] or 0)
+        conf = (r["success"] + 1) / (total + 2) if total else 0.5
+        print(f"{(r['app_version'] or '-'):<10} "
+              f"{r['from_state']:<18} {r['role']:<18} "
+              f"{r['action']:<6} → {r['to_state']:<18} "
+              f"{conf:>5.2f}  ({r['success']}/{r['failure']})")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Inspect the Chimera selector DB.")
     p.add_argument("app", nargs="?", help="package id")
     p.add_argument("version", nargs="?", help="version prefix")
     p.add_argument("--db", default="chimera.db")
     p.add_argument("--events", action="store_true",
-                   help="show recent event log instead")
+                   help="show recent event log")
     p.add_argument("--full", action="store_true",
                    help="full bundle dump (requires app and version)")
+    p.add_argument("--states", action="store_true",
+                   help="list learned UI states")
+    p.add_argument("--graph", action="store_true",
+                   help="list state transitions (requires app)")
     args = p.parse_args(argv)
 
     con = connect(args.db)
     if args.events:
         events(con)
+    elif args.states:
+        states(con, args.app)
+    elif args.graph:
+        if not args.app:
+            print("--graph requires an app argument")
+            return 2
+        graph(con, args.app, args.version)
     elif args.app and args.version and args.full:
         full_dump(con, args.app, args.version)
     elif args.app:

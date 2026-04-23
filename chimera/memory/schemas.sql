@@ -68,3 +68,43 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS ix_events_lookup
     ON events(app_package, role, ts DESC);
+
+-- ===========================================================================
+-- State machine: semantic screen identities + transitions between them.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS states (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_package        TEXT NOT NULL,
+    app_version        TEXT NOT NULL DEFAULT '',
+    name               TEXT NOT NULL,
+    features_json      TEXT NOT NULL DEFAULT '[]',
+    fingerprints_json  TEXT NOT NULL DEFAULT '[]',
+    allowed_roles_json TEXT NOT NULL DEFAULT '[]',
+    confidence         REAL NOT NULL DEFAULT 0.5,
+    first_seen         REAL NOT NULL DEFAULT 0,
+    last_seen          REAL NOT NULL DEFAULT 0,
+    UNIQUE(app_package, app_version, name)
+);
+
+CREATE INDEX IF NOT EXISTS ix_states_app
+    ON states(app_package, app_version);
+
+CREATE TABLE IF NOT EXISTS state_transitions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_package   TEXT NOT NULL,
+    app_version   TEXT NOT NULL DEFAULT '',
+    from_state    TEXT NOT NULL,
+    to_state      TEXT NOT NULL,
+    role          TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    success       INTEGER NOT NULL DEFAULT 0,
+    failure       INTEGER NOT NULL DEFAULT 0,
+    last_ok       REAL NOT NULL DEFAULT 0,
+    UNIQUE(app_package, app_version, from_state, role, action, to_state)
+);
+
+CREATE INDEX IF NOT EXISTS ix_trans_from
+    ON state_transitions(app_package, app_version, from_state);
+CREATE INDEX IF NOT EXISTS ix_trans_to
+    ON state_transitions(app_package, app_version, to_state);

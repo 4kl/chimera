@@ -41,6 +41,12 @@ class Memory:
         ddl = _SCHEMA.read_text()
         migrations.run(self._con, ddl)
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """Expose the underlying connection so sibling stores (e.g. StateStore)
+        can share the same DB file without juggling paths."""
+        return self._con
+
     # ================= selectors =================
     def get(self, app: str, version: str, screen_fp: str, role: str
             ) -> Optional[SelectorBundle]:

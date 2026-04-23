@@ -179,15 +179,16 @@ Chimera(
 
 ```
 chimera/
-├── core/         models (UINode, SelectorBundle, Session), driver wrapper, errors
-├── profiler/     resolves (package, versionName) via uiautomator2 + dumpsys
+├── core/         models (UINode, SelectorBundle, ActionStep, Session), driver wrapper, errors
+├── profiler/     (package, versionName) + runtime pm-list-packages resolver
 ├── perception/   capture (XML + screenshot) → UINode tree → screen fingerprint
 ├── selector/     multi-strategy candidate generation + ranking + validation
-├── reasoning/    Ollama client, intent + element-pick prompts
+├── reasoning/    Ollama client, intent / element-pick / state-classify prompts
 ├── learning/     per-step mode decision (REUSE/REVALIDATE/LEARN/HEAL) + session
-├── execution/    try cached → fallbacks → trigger discovery/heal
+├── state/        UIState + StateTransition, detector, graph, Dijkstra planner, navigator
+├── execution/    try cached → fallbacks → trigger discovery/heal; state-aware pre-check
 ├── healing/      LLM re-pick on live tree (+ opt. visual match)
-├── memory/       SQLite: selectors / app_profiles / version_migrations / events
+├── memory/       SQLite: selectors / app_profiles / version_migrations / events / states / state_transitions
 └── orchestrator.py
 ```
 
@@ -201,6 +202,41 @@ chimera/
 | Learning Engine | Per step: `REUSE` if cache fresh, `REVALIDATE` if stale/migrated, `LEARN` if unknown, `HEAL` on failure |
 | Execution | REUSE validates live element fingerprint before acting; fallbacks tried in ranked order; failures trigger heal |
 | Healing | LLM re-pick + optional visual match; emits new bundle with bumped revision |
+
+## State-based navigation
+
+Every screen in an app is represented as a **state** (`main_page`,
+`chat_screen`, `search_screen`, ...). Each element-based step carries an
+optional `target_state`; before the step executes, the executor detects the
+current state and, if it doesn't match, plans a path through the
+**state graph** and navigates.
+
+- **Detection** (`chimera/state/detector.py`) is tiered: exact
+  fingerprint hit → structural feature-score match → LLM classification.
+  Unknown screens are labelled lazily by the model and stored with 2–5
+  key identifying features (resource-ids, text-contains, class counts).
+- **Graph** (`chimera/state/graph.py`) is built from
+  `state_transitions` rows. An edge `(from, role, action) → to` gains
+  confidence each time the action in that state actually lands in the
+  expected next state.
+- **Planner** (`chimera/state/planner.py`) is Dijkstra over edge cost
+  `1 + (1 − confidence) * 3`, with a small penalty for `back` actions.
+- **Navigator** (`chimera/state/navigator.py`) walks the planned path,
+  validates the state after each hop, and recovers (press back + re-plan)
+  if the actual state doesn't match the expected one.
+
+Cross-version priors: if the new app version has no states yet, the detector
+borrows states from a prior version so the first run on an update isn't
+ice-cold.
+
+Inspect the state system:
+
+```bash
+python scripts/inspect_db.py --states                    # all learned states
+python scripts/inspect_db.py --states com.whatsapp       # filter by app
+python scripts/inspect_db.py --graph com.whatsapp        # all transitions
+python scripts/inspect_db.py --graph com.whatsapp 2.24   # filter by version
+```
 
 ## Session modes
 
@@ -220,6 +256,8 @@ Every step independently resolves into one of four modes, logged in the
 - `app_profiles(app_package, app_version)` — known screen fingerprints per version, used for similarity.
 - `version_migrations` — ledger of `{from_version → to_version, jaccard, roles_copied}`.
 - `events` — append-only log (`learned` / `ok` / `fail_primary` / `fail_all` / `healed` / `migrated`).
+- `states(app_package, app_version, name)` — semantic state catalogue (features, fingerprints, allowed roles, confidence).
+- `state_transitions(app_package, app_version, from_state, role, action, to_state)` — directed edges + success/failure counters.
 
 Schema migrations are automatic (`chimera/memory/migrations.py`): a v1 DB is
 upgraded in place, `app_version` backfills to `""`.

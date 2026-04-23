@@ -91,6 +91,9 @@ class ActionStep:
     action: str  # tap | type | swipe | wait | back | launch
     value: Optional[str] = None
     description: str = ""
+    # Optional semantic state the UI is expected to be in before this step
+    # executes. When set, the executor will navigate to this state first.
+    target_state: Optional[str] = None
 
 
 @dataclass
