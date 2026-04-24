@@ -147,3 +147,6 @@ class Frame:
     activity: str
     png: Optional[bytes] = None
     ts: float = field(default_factory=time.time)
+    # Raw a11y XML from the driver, retained so callers can re-evaluate
+    # arbitrary XPaths against the tree without another device round-trip.
+    raw_xml: str = ""

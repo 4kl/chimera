@@ -160,14 +160,15 @@ def _match_score(frame: Frame, state: UIState) -> float:
     total_w = sum(f.weight for f in state.features) or 1.0
     got_w = 0.0
     for f in state.features:
-        if _feature_present(frame.flat, f):
+        if _feature_present(frame.flat, f, frame.raw_xml):
             got_w += f.weight
         elif f.required:
             return 0.0
     return got_w / total_w
 
 
-def _feature_present(flat: list[UINode], f: StateFeature) -> bool:
+def _feature_present(flat: list[UINode], f: StateFeature,
+                     raw_xml: str = "") -> bool:
     if f.kind == "resource_id":
         return any(n.resource_id == f.value for n in flat)
     if f.kind == "content_desc":
@@ -180,6 +181,17 @@ def _feature_present(flat: list[UINode], f: StateFeature) -> bool:
         try:
             cls, min_count = f.value.rsplit(":", 1)
             return sum(1 for n in flat if n.cls == cls) >= int(min_count)
+        except Exception:
+            return False
+    if f.kind == "xpath_present":
+        # Evaluate against the raw a11y XML. This is the escape hatch for
+        # declared states whose signatures are raw XPaths (PUMA-style).
+        if not raw_xml:
+            return False
+        try:
+            import lxml.etree as ET
+            tree = ET.fromstring(raw_xml.encode())
+            return bool(tree.xpath(f.value))
         except Exception:
             return False
     return False
@@ -219,7 +231,7 @@ def _features_from_verdict(frame: Frame, verdict: dict) -> list[StateFeature]:
             weight=float(f.get("weight", 1.0)),
             required=bool(f.get("required", False)),
         )
-        if _feature_present(frame.flat, feat):
+        if _feature_present(frame.flat, feat, frame.raw_xml):
             out.append(feat)
     return out
 

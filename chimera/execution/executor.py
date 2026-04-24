@@ -56,6 +56,7 @@ class Executor:
             root=root, flat=flat, fp=fp,
             package=snap["package"], activity=snap["activity"],
             png=snap.get("png"), ts=snap["ts"],
+            raw_xml=snap["xml"],
         )
 
     # ---------- per-step entrypoint ----------

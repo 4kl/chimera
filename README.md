@@ -44,13 +44,35 @@ and accept the host key on the device.
 
 ```bash
 adb devices          # should list your device as "device" (not "unauthorized")
-python -m uiautomator2 init   # installs the uiautomator2 ATX agent on the device
 ```
 
 If you have multiple devices connected, pass the serial later with
-`--serial <serial>`.
+`--serial <serial>` (or set `ANDROID_SERIAL`).
 
-### 3. Set up Ollama
+### 3. Set up Appium
+
+Chimera drives the device through Appium (not the `uiautomator2` Python
+client). You need Node.js, the Appium CLI, and the UiAutomator2 driver.
+
+```bash
+# Node.js 18+ from https://nodejs.org or `brew install node`
+npm install -g appium
+appium driver install uiautomator2
+
+# Start the server (leave running in a separate terminal)
+appium --allow-insecure=adb_shell
+# or for more permissive dev mode:
+# appium --relaxed-security
+```
+
+The `--allow-insecure=adb_shell` flag lets `mobile: shell` work for commands
+like `dumpsys` and `pm list packages`. Chimera also uses host-side `adb`
+(if on PATH) as the preferred shell path, so this flag is only a fallback.
+
+Endpoint defaults to `http://127.0.0.1:4723`; override via `APPIUM_URL` or
+`--appium-url`.
+
+### 4. Set up Ollama
 
 Install Ollama from <https://ollama.com/download>, then start the server and
 pull a model:
@@ -65,7 +87,7 @@ ollama pull qwen2.5:7b-instruct       # default model
 Any JSON-mode-capable instruction model works. Override the default via
 `OLLAMA_MODEL` (see Config below).
 
-### 4. Smoke-test the wiring
+### 5. Smoke-test the wiring
 
 ```bash
 # Confirms device + perception pipeline (no LLM, no actions taken)
@@ -203,6 +225,81 @@ chimera/
 | Execution | REUSE validates live element fingerprint before acting; fallbacks tried in ranked order; failures trigger heal |
 | Healing | LLM re-pick + optional visual match; emits new bundle with bumped revision |
 
+## Declarative AppGraph (PUMA-style, XPath-first)
+
+For apps where you want **zero LLM calls on the happy path**, use the
+declarative `chimera.app_graph` layer. You write states and transitions as
+class-level declarations with raw XPaths; the `@action(state)` decorator
+auto-navigates; and when an XPath stops resolving after an app update, the
+hybrid driver transparently falls back to Chimera's LLM-driven discovery,
+caches the repaired selector under the new app version, and the next run is
+XPath-fast again.
+
+```python
+from chimera.app_graph import (
+    AppGraph, DeclaredState, action, compose_clicks, supported_version,
+)
+from chimera.orchestrator import Chimera
+
+CHAT_INPUT = "//*[@resource-id='com.whatsapp:id/entry']"
+CHAT_SEND  = "//*[@resource-id='com.whatsapp:id/send']"
+CONTACT_ROW = ("//*[@resource-id='com.whatsapp:id/conversations_row_contact_name'"
+               " and @text='{conversation}']")
+
+def go_to_chat(driver, conversation: str):
+    driver.click(CONTACT_ROW.format(conversation=conversation))
+
+@supported_version("2.24.0")
+class WhatsApp(AppGraph, package="com.whatsapp"):
+    conversations_state = DeclaredState(
+        name="conversations",
+        xpaths=["//*[@resource-id='com.whatsapp:id/home_root_layout']"],
+        initial=True,
+    )
+    chat_state = DeclaredState(
+        name="chat",
+        xpaths=["//*[@resource-id='com.whatsapp:id/conversation_contact_name']",
+                CHAT_INPUT],
+        parent=conversations_state,
+    )
+    conversations_state.to(chat_state, via=go_to_chat)
+
+    @action(chat_state)
+    def send_message(self, message_text: str, conversation: str = None):
+        self.driver.click(CHAT_INPUT, role="message_input")
+        self.driver.send_keys(CHAT_INPUT, message_text, role="message_input")
+        self.driver.click(CHAT_SEND, role="send_button")
+
+
+app = WhatsApp(Chimera())
+app.send_message("hey", conversation="John")
+# → @action detects current state
+# → if not in chat with John, navigates via conversations_state.to(chat_state)
+# → clicks CHAT_INPUT (direct XPath — no LLM)
+# → if the XPath doesn't resolve (app updated), XPathDriver asks Chimera's
+#   executor to find the element by role, caches the new selector, replays.
+```
+
+A full example is at `examples/whatsapp.py` + `examples/whatsapp_xpaths.py`.
+
+Key pieces:
+
+| Piece | Purpose |
+|---|---|
+| `DeclaredState(name, xpaths, parent, initial, validator)` | XPath-signature-based state; XPaths auto-translate to state features so the detector recognizes them without runtime learning |
+| `state.to(target, via=fn)` | Declare a transition; `fn(driver, **ctx_kwargs)` performs it |
+| `compose_clicks([xp1, xp2])` | Transition helper — tap each XPath in order |
+| `@action(state, end_state=None)` | Decorator: auto-navigate to `state` before the call; if `validator` set and context kwargs given, also verify context |
+| `@supported_version("…")` | Records the versionName the XPaths were written for; version drift triggers the heal path |
+| `XPathDriver.click/send_keys/is_present` | XPath-first; on failure → LLM discovery via Chimera's executor, caches repaired selector |
+| `PopupHandler` | Register expected popups; AppGraph dismisses them before each action |
+
+The AppGraph layer reuses the same `StateStore` + Navigator as the
+NL-command orchestrator — the graph you hand-wire here is the same graph
+runtime navigation walks, and every success/failure updates the same
+confidence counters. You can mix-and-match: declare what you know, let
+Chimera learn the rest.
+
 ## State-based navigation
 
 Every screen in an app is represented as a **state** (`main_page`,
@@ -294,9 +391,11 @@ sqlite3 chimera.db "SELECT role, primary_strategy, failures, provenance FROM sel
 
 | Symptom | Fix |
 |---|---|
-| `uiautomator2 not installed` | `pip install -e .` inside the venv you're using |
+| `Appium-Python-Client not installed` | `pip install -e .` inside the venv you're using |
+| `failed to connect to Appium at …` | `appium` server isn't running; start with `appium --allow-insecure=adb_shell` |
+| `Could not find a driver for automationName 'UiAutomator2'` | `appium driver install uiautomator2` |
 | `adb devices` shows `unauthorized` | unlock device → accept the host RSA prompt |
-| `python -m uiautomator2 init` hangs | usually a flaky USB cable; try another port/cable |
+| `mobile:shell` returns empty / "Not allowed" | server started without `--allow-insecure=adb_shell`; host-side `adb` is used as a fallback, so just install platform-tools on PATH |
 | `Ollama request failed: ... 404` | `ollama serve` isn't running, or model isn't pulled |
 | `Ollama returned non-JSON content` | model isn't instruction-tuned; use `qwen2.5:*-instruct` or similar |
 | `LLM could not locate role=...` | target element isn't on-screen yet — either the plan is wrong or a `wait` step is missing; rerun with `-v` to see the pick's `reason` |

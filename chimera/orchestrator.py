@@ -78,10 +78,11 @@ class Chimera:
     def __init__(self,
                  db_path: str = "chimera.db",
                  serial: Optional[str] = None,
+                 appium_url: Optional[str] = None,
                  ollama_url: Optional[str] = None,
                  ollama_model: Optional[str] = None,
                  max_heal_retries: int = 1):
-        self.d = Driver.connect(serial=serial)
+        self.d = Driver.connect(serial=serial, appium_url=appium_url)
         self.llm = Ollama(url=ollama_url, model=ollama_model)
         self.mem = Memory(db_path)
         self.profiler = AppProfiler(self.d)
